@@ -16,7 +16,7 @@ from .planner import parse_epic_info
 console = Console()
 
 
-def first_run_setup() -> Config:
+async def first_run_setup() -> Config:
     """Interactive first-run configuration."""
     console.print()
     console.print("[bold blue]Welcome to Epic Executor![/bold blue]")
@@ -28,12 +28,10 @@ def first_run_setup() -> Config:
     # Ask for base directory
     default_dir = str(DEFAULT_CONFIG_DIR)
 
-    base_dir = inquirer.filepath(
+    base_dir = await inquirer.text(
         message="Where should epic-executor store its data?",
         default=default_dir,
-        validate=PathValidator(is_dir=True, message="Please enter a valid directory"),
-        only_directories=True,
-    ).execute()
+    ).execute_async()
 
     if not base_dir:
         base_dir = default_dir
@@ -58,15 +56,15 @@ def first_run_setup() -> Config:
     return config
 
 
-def select_epic_folder() -> str | None:
+async def select_epic_folder() -> str | None:
     """Interactive epic folder selection."""
     # First ask for a starting directory
-    start_dir = inquirer.filepath(
+    start_dir = await inquirer.filepath(
         message="Select the epic folder:",
         default=str(Path.cwd()),
         validate=PathValidator(is_dir=True, message="Please select a directory"),
         only_directories=True,
-    ).execute()
+    ).execute_async()
 
     if not start_dir:
         return None
@@ -77,10 +75,10 @@ def select_epic_folder() -> str | None:
 
     if not task_files:
         console.print(f"[yellow]Warning:[/yellow] No task files found in {start_dir}")
-        proceed = inquirer.confirm(
+        proceed = await inquirer.confirm(
             message="This doesn't look like an epic folder. Continue anyway?",
             default=False,
-        ).execute()
+        ).execute_async()
 
         if not proceed:
             return None
@@ -88,7 +86,7 @@ def select_epic_folder() -> str | None:
     return start_dir
 
 
-def select_action() -> str:
+async def select_action() -> str:
     """Select main action."""
     choices = [
         Choice(value="execute", name="Execute epic (plan + run tasks)"),
@@ -98,14 +96,14 @@ def select_action() -> str:
         Choice(value="quit", name="Quit"),
     ]
 
-    return inquirer.select(
+    return await inquirer.select(
         message="What would you like to do?",
         choices=choices,
         default="execute",
-    ).execute()
+    ).execute_async()
 
 
-def select_execution_options(epic_path: Path) -> dict:
+async def select_execution_options(epic_path: Path) -> dict:
     """Select execution options."""
     options = {}
 
@@ -113,36 +111,36 @@ def select_execution_options(epic_path: Path) -> dict:
     existing_plan = find_existing_plan(epic_path)
     if existing_plan:
         console.print(f"[green]Found existing plan:[/green] {existing_plan.name}")
-        use_existing = inquirer.confirm(
+        use_existing = await inquirer.confirm(
             message="Use existing execution plan?",
             default=True,
-        ).execute()
+        ).execute_async()
         options["use_existing_plan"] = use_existing
 
     # Max concurrent agents
-    options["max_concurrent"] = inquirer.number(
+    options["max_concurrent"] = await inquirer.number(
         message="Maximum concurrent agents:",
         default=4,
         min_allowed=1,
         max_allowed=10,
-    ).execute()
+    ).execute_async()
 
     # Create worktree?
-    options["create_worktree"] = inquirer.confirm(
+    options["create_worktree"] = await inquirer.confirm(
         message="Create a git worktree for isolated execution?",
         default=True,
-    ).execute()
+    ).execute_async()
 
     # Confirm execution
-    options["confirm"] = inquirer.confirm(
+    options["confirm"] = await inquirer.confirm(
         message="Ready to execute. Proceed?",
         default=True,
-    ).execute()
+    ).execute_async()
 
     return options
 
 
-def edit_config(config: Config) -> Config:
+async def edit_config(config: Config) -> Config:
     """View and edit configuration settings."""
     while True:
         console.print()
@@ -163,11 +161,11 @@ def edit_config(config: Config) -> Config:
             Choice(value="back", name="Back to main menu"),
         ]
 
-        action = inquirer.select(
+        action = await inquirer.select(
             message="What would you like to change?",
             choices=choices,
             default="back",
-        ).execute()
+        ).execute_async()
 
         if action == "back":
             return config
@@ -178,21 +176,21 @@ def edit_config(config: Config) -> Config:
                 for model_id, description in AVAILABLE_MODELS
             ]
 
-            new_model = inquirer.select(
+            new_model = await inquirer.select(
                 message="Select a model:",
                 choices=model_choices,
                 default=config.model,
-            ).execute()
+            ).execute_async()
 
             config.model = new_model
             config.save()
             console.print(f"[green]✓[/green] Model updated to: {new_model}")
 
         elif action == "api_key":
-            new_key = inquirer.secret(
+            new_key = await inquirer.secret(
                 message="Enter your DeepInfra API key:",
                 validate=lambda x: len(x) > 0 or "API key cannot be empty",
-            ).execute()
+            ).execute_async()
 
             if new_key:
                 config.api_key = new_key
@@ -200,12 +198,12 @@ def edit_config(config: Config) -> Config:
                 console.print("[green]✓[/green] API key saved")
 
         elif action == "max_concurrent":
-            new_max = inquirer.number(
+            new_max = await inquirer.number(
                 message="Maximum concurrent agents:",
                 default=config.max_concurrent,
                 min_allowed=1,
                 max_allowed=10,
-            ).execute()
+            ).execute_async()
 
             config.max_concurrent = int(new_max)
             config.save()
@@ -216,7 +214,7 @@ async def run_interactive() -> int:
     """Run the interactive CLI."""
     # Check for first run
     if is_first_run():
-        config = first_run_setup()
+        config = await first_run_setup()
     else:
         config = get_or_create_config()
         if config is None:
@@ -226,18 +224,18 @@ async def run_interactive() -> int:
 
     while True:
         console.print()
-        action = select_action()
+        action = await select_action()
 
         if action == "quit":
             console.print("Goodbye!")
             return 0
 
         if action == "config":
-            config = edit_config(config)
+            config = await edit_config(config)
             continue
 
         # All other actions need an epic folder
-        epic_folder = select_epic_folder()
+        epic_folder = await select_epic_folder()
         if not epic_folder:
             continue
 
@@ -256,7 +254,7 @@ async def run_interactive() -> int:
             await setup_worktree(epic_folder, Path(config.worktree_dir))
 
         elif action == "execute":
-            options = select_execution_options(epic_path)
+            options = await select_execution_options(epic_path)
 
             if not options.get("confirm", False):
                 console.print("[yellow]Execution cancelled.[/yellow]")
@@ -289,10 +287,10 @@ async def run_interactive() -> int:
                 console.print("[green]All tasks completed successfully![/green]")
 
         # Ask to continue
-        continue_prompt = inquirer.confirm(
+        continue_prompt = await inquirer.confirm(
             message="Do another operation?",
             default=False,
-        ).execute()
+        ).execute_async()
 
         if not continue_prompt:
             console.print("Goodbye!")

@@ -97,7 +97,7 @@ On first run, epic-executor creates `~/.epic-executor/` with:
 
 - Python 3.10+
 - Git (for worktree features)
-- [DeepInfra API key](https://deepinfra.com/) - Set `DEEPINFRA_API_KEY` environment variable
+- [DeepInfra API key](https://deepinfra.com/) - Configure via Settings menu or set `DEEPINFRA_API_KEY` environment variable
 
 ## License
 
