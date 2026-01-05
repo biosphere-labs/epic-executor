@@ -9,7 +9,7 @@ from InquirerPy.base.control import Choice
 from InquirerPy.validator import PathValidator
 from rich.console import Console
 
-from .config import Config, is_first_run, get_or_create_config, DEFAULT_CONFIG_DIR
+from .config import Config, is_first_run, get_or_create_config, DEFAULT_CONFIG_DIR, AVAILABLE_MODELS
 from .executor import plan_epic, execute_epic, setup_worktree, find_existing_plan
 from .planner import parse_epic_info
 
@@ -94,7 +94,7 @@ def select_action() -> str:
         Choice(value="execute", name="Execute epic (plan + run tasks)"),
         Choice(value="plan", name="Generate execution plan only"),
         Choice(value="worktree", name="Set up git worktree only"),
-        Choice(value="config", name="View/edit configuration"),
+        Choice(value="config", name="Settings (model, API key, etc.)"),
         Choice(value="quit", name="Quit"),
     ]
 
@@ -142,16 +142,74 @@ def select_execution_options(epic_path: Path) -> dict:
     return options
 
 
-def view_config(config: Config) -> None:
-    """Display current configuration."""
-    console.print()
-    console.print("[bold]Current Configuration:[/bold]")
-    console.print(f"  Base directory: {config.base_dir}")
-    console.print(f"  Worktree directory: {config.worktree_dir}")
-    console.print(f"  Plans directory: {config.plans_dir}")
-    console.print(f"  Default model: {config.default_model}")
-    console.print(f"  Max concurrent: {config.max_concurrent}")
-    console.print()
+def edit_config(config: Config) -> Config:
+    """View and edit configuration settings."""
+    while True:
+        console.print()
+        console.print("[bold]Current Configuration:[/bold]")
+        console.print(f"  Base directory: {config.base_dir}")
+        console.print(f"  Worktree directory: {config.worktree_dir}")
+        console.print(f"  Plans directory: {config.plans_dir}")
+        console.print(f"  Model: {config.model}")
+        console.print(f"  Max concurrent: {config.max_concurrent}")
+        api_key_display = "****" + config.api_key[-4:] if config.api_key and len(config.api_key) > 4 else ("Set" if config.api_key else "Not set")
+        console.print(f"  API key: {api_key_display}")
+        console.print()
+
+        choices = [
+            Choice(value="model", name="Change model"),
+            Choice(value="api_key", name="Set DeepInfra API key"),
+            Choice(value="max_concurrent", name="Change max concurrent agents"),
+            Choice(value="back", name="Back to main menu"),
+        ]
+
+        action = inquirer.select(
+            message="What would you like to change?",
+            choices=choices,
+            default="back",
+        ).execute()
+
+        if action == "back":
+            return config
+
+        if action == "model":
+            model_choices = [
+                Choice(value=model_id, name=f"{description} ({model_id})")
+                for model_id, description in AVAILABLE_MODELS
+            ]
+
+            new_model = inquirer.select(
+                message="Select a model:",
+                choices=model_choices,
+                default=config.model,
+            ).execute()
+
+            config.model = new_model
+            config.save()
+            console.print(f"[green]✓[/green] Model updated to: {new_model}")
+
+        elif action == "api_key":
+            new_key = inquirer.secret(
+                message="Enter your DeepInfra API key:",
+                validate=lambda x: len(x) > 0 or "API key cannot be empty",
+            ).execute()
+
+            if new_key:
+                config.api_key = new_key
+                config.save()
+                console.print("[green]✓[/green] API key saved")
+
+        elif action == "max_concurrent":
+            new_max = inquirer.number(
+                message="Maximum concurrent agents:",
+                default=config.max_concurrent,
+                min_allowed=1,
+                max_allowed=10,
+            ).execute()
+
+            config.max_concurrent = int(new_max)
+            config.save()
+            console.print(f"[green]✓[/green] Max concurrent updated to: {new_max}")
 
 
 async def run_interactive() -> int:
@@ -175,7 +233,7 @@ async def run_interactive() -> int:
             return 0
 
         if action == "config":
-            view_config(config)
+            config = edit_config(config)
             continue
 
         # All other actions need an epic folder
