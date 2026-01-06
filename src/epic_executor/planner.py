@@ -98,10 +98,16 @@ def find_dependency_graph_section(epic_path: Path) -> str | None:
     content = epic_file.read_text()
 
     # Look for "Dependency Graph" or "Parallel Execution" section
+    # Supports both ## headings and **bold:** format
     patterns = [
-        r"^##\s+Dependency\s+Graph\s*\n(.*?)(?=^##\s|\Z)",
-        r"^##\s+Parallel\s+Execution\s*\n(.*?)(?=^##\s|\Z)",
-        r"^##\s+Execution\s+Order\s*\n(.*?)(?=^##\s|\Z)",
+        # Markdown headings
+        r"^##\s+Dependency\s+Graph\s*:?\s*\n(.*?)(?=^##\s|\Z)",
+        r"^##\s+Parallel\s+Execution\s*:?\s*\n(.*?)(?=^##\s|\Z)",
+        r"^##\s+Execution\s+Order\s*:?\s*\n(.*?)(?=^##\s|\Z)",
+        # Bold text format: **Dependency Graph:**
+        r"\*\*Dependency\s+Graph:?\*\*:?\s*\n(.*?)(?=\n\*\*[A-Z]|\n##\s|\Z)",
+        r"\*\*Parallel\s+Execution:?\*\*:?\s*\n(.*?)(?=\n\*\*[A-Z]|\n##\s|\Z)",
+        r"\*\*Execution\s+Order:?\*\*:?\s*\n(.*?)(?=\n\*\*[A-Z]|\n##\s|\Z)",
     ]
 
     for pattern in patterns:

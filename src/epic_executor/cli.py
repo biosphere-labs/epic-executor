@@ -55,7 +55,7 @@ async def first_run_setup() -> Config:
     return config
 
 
-async def browse_directory(start_path: Path) -> Path | None:
+async def browse_directory(start_path: Path, show_hidden: bool = False) -> Path | None:
     """Interactive directory browser."""
     current = start_path.resolve()
 
@@ -77,13 +77,26 @@ async def browse_directory(start_path: Path) -> Path | None:
 
         # Subdirectories
         try:
-            subdirs = sorted([d for d in current.iterdir() if d.is_dir() and not d.name.startswith(".")])
-            for subdir in subdirs[:20]:  # Limit to 20 to avoid huge lists
-                choices.append(Choice(value=str(subdir), name=f"📁 {subdir.name}/"))
-            if len(subdirs) > 20:
-                choices.append(Choice(value="__MORE__", name=f"... and {len(subdirs) - 20} more"))
+            if show_hidden:
+                subdirs = sorted([d for d in current.iterdir() if d.is_dir()])
+            else:
+                subdirs = sorted([d for d in current.iterdir() if d.is_dir() and not d.name.startswith(".")])
+            for subdir in subdirs[:25]:  # Limit to 25 to avoid huge lists
+                icon = "📁" if not subdir.name.startswith(".") else "📂"
+                choices.append(Choice(value=str(subdir), name=f"{icon} {subdir.name}/"))
+            if len(subdirs) > 25:
+                choices.append(Choice(value="__MORE__", name=f"... and {len(subdirs) - 25} more"))
         except PermissionError:
             pass
+
+        # Toggle hidden files
+        if show_hidden:
+            choices.append(Choice(value="__HIDE_HIDDEN__", name="👁 Hide hidden folders"))
+        else:
+            choices.append(Choice(value="__SHOW_HIDDEN__", name="👁 Show hidden folders (.claude, etc.)"))
+
+        # Type path manually
+        choices.append(Choice(value="__TYPE__", name="⌨ Type path manually"))
 
         # Cancel option
         choices.append(Choice(value="__CANCEL__", name="✗ Cancel"))
@@ -101,7 +114,11 @@ async def browse_directory(start_path: Path) -> Path | None:
             current = current.parent
         elif selection == "__CANCEL__":
             return None
-        elif selection == "__MORE__":
+        elif selection == "__SHOW_HIDDEN__":
+            show_hidden = True
+        elif selection == "__HIDE_HIDDEN__":
+            show_hidden = False
+        elif selection in ("__MORE__", "__TYPE__"):
             # Let user type path manually
             typed = await inquirer.text(
                 message="Type path:",
@@ -116,10 +133,26 @@ async def browse_directory(start_path: Path) -> Path | None:
 
 
 async def select_epic_folder() -> str | None:
-    """Interactive epic folder selection."""
-    result = await browse_directory(Path.cwd())
+    """Interactive epic folder selection with path autocomplete."""
+    console.print("[dim]Type path and press Tab for autocomplete[/dim]")
 
-    if result is None:
+    epic_path = await inquirer.filepath(
+        message="Epic folder path:",
+        default=str(Path.cwd()),
+        only_directories=True,
+    ).execute_async()
+
+    if not epic_path:
+        return None
+
+    result = Path(epic_path)
+
+    if not result.exists():
+        console.print(f"[red]Error:[/red] Path does not exist: {result}")
+        return None
+
+    if not result.is_dir():
+        console.print(f"[red]Error:[/red] Not a directory: {result}")
         return None
 
     # Verify it looks like an epic folder
