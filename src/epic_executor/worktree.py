@@ -234,6 +234,52 @@ def push_branch(worktree_path: Path, set_upstream: bool = True) -> bool:
         return False
 
 
+def create_pull_request(
+    worktree_path: Path,
+    title: str,
+    body: str,
+    base_branch: str = "main",
+) -> str | None:
+    """Create a pull request using gh CLI.
+
+    Returns the PR URL if successful, None otherwise.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gh", "pr", "create",
+                "--title", title,
+                "--body", body,
+                "--base", base_branch,
+            ],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        # gh pr create outputs the PR URL
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        # Check if PR already exists
+        if "already exists" in e.stderr:
+            # Get existing PR URL
+            try:
+                result = subprocess.run(
+                    ["gh", "pr", "view", "--json", "url", "-q", ".url"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                return result.stdout.strip()
+            except subprocess.CalledProcessError:
+                return None
+        return None
+    except FileNotFoundError:
+        # gh CLI not installed
+        return None
+
+
 def find_dependencies(repo_root: Path, patterns: list[str] | None = None) -> list[Path]:
     """Find dependency paths in the repo that match patterns."""
     if patterns is None:

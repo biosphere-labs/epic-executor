@@ -20,7 +20,7 @@ from .planner import (
 )
 from .pool import run_pool, PoolStatus, TaskResult
 from .impl_agent import run_implementation
-from .worktree import create_worktree, copy_dependencies, get_repo_root, commit_changes, get_current_branch, WorktreeInfo
+from .worktree import create_worktree, copy_dependencies, get_repo_root, commit_changes, get_current_branch, push_branch, create_pull_request, WorktreeInfo
 from .status import load_or_create_status, ExecutionStatus
 
 console = Console()
@@ -160,10 +160,24 @@ async def execute_epic(
     if new_completed:
         project_path = Path(project_root)
         try:
-            # Collect all files modified
+            # Collect all files modified and implementation summaries
             all_files = []
-            for result in status.results.values():
+            task_summaries = []
+            for task_num, result in status.results.items():
                 all_files.extend(result.files_modified)
+                # Extract last paragraph as summary (usually describes what was done)
+                if result.impl_output:
+                    lines = result.impl_output.strip().split('\n')
+                    # Get last non-empty lines as summary
+                    summary_lines = []
+                    for line in reversed(lines):
+                        if line.strip():
+                            summary_lines.insert(0, line.strip())
+                            if len(summary_lines) >= 3:
+                                break
+                    if summary_lines:
+                        task_name = next((t.name for t in all_tasks if t.number == task_num), f"Task {task_num}")
+                        task_summaries.append(f"- **Task {task_num:03d}** ({task_name}): {' '.join(summary_lines)[:200]}")
 
             # Commit all changes
             commit_msg = f"feat: implement epic tasks ({len(status.completed)}/{len(all_tasks)} completed)"
@@ -176,6 +190,37 @@ async def execute_epic(
                 log(f"  [bold]Commit:[/bold] {commit_hash}")
                 log(f"  [bold]Branch:[/bold] {branch}")
                 log(f"  [bold]Worktree:[/bold] {project_root}")
+
+                # Push to remote
+                if push_branch(project_path):
+                    log(f"  [bold]Pushed:[/bold] origin/{branch}")
+
+                    # Create PR if all tasks completed
+                    if len(status.failed) == 0:
+                        epic_name = exec_status.epic_name if exec_status else "epic"
+                        pr_title = f"feat: {epic_name.replace('-', ' ').title()}"
+                        pr_body = f"""## Summary
+
+Implements the {epic_name} epic with {len(all_tasks)} tasks completed.
+
+## Tasks Completed
+
+{chr(10).join(task_summaries) if task_summaries else "All tasks completed successfully."}
+
+## Files Modified
+
+{len(all_files)} files created/modified across {len(status.completed)} tasks.
+
+---
+🤖 Generated with [Epic Executor](https://github.com/biosphere-labs/epic-executor)
+"""
+                        pr_url = create_pull_request(project_path, pr_title, pr_body)
+                        if pr_url:
+                            log(f"  [bold]PR:[/bold] {pr_url}")
+                        else:
+                            log("  [dim]PR creation skipped (already exists or gh CLI unavailable)[/dim]")
+                else:
+                    log("  [yellow]Could not push to remote[/yellow]")
             else:
                 log("[yellow]No changes to commit[/yellow]")
         except Exception as e:
