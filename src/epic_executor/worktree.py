@@ -1,8 +1,21 @@
 """Git worktree management for epic execution."""
 
+import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+# Common dependency patterns to copy to worktrees (gitignored files needed for execution)
+DEFAULT_DEPENDENCY_PATTERNS = [
+    "node_modules",
+    ".env",
+    "dist",
+    ".next",
+    "build",
+    "__pycache__",
+    ".venv",
+    "venv",
+]
 
 
 @dataclass
@@ -13,6 +26,7 @@ class WorktreeInfo:
     branch: str
     commit: str
     is_new: bool
+    copied_deps: list[str] = field(default_factory=list)
 
 
 def get_repo_root(path: Path) -> Path | None:
@@ -218,3 +232,68 @@ def push_branch(worktree_path: Path, set_upstream: bool = True) -> bool:
         return True
     except subprocess.CalledProcessError:
         return False
+
+
+def find_dependencies(repo_root: Path, patterns: list[str] | None = None) -> list[Path]:
+    """Find dependency paths in the repo that match patterns."""
+    if patterns is None:
+        patterns = DEFAULT_DEPENDENCY_PATTERNS
+
+    found = []
+    for pattern in patterns:
+        # Direct match in repo root
+        direct = repo_root / pattern
+        if direct.exists():
+            found.append(direct)
+
+        # Search in immediate subdirectories (e.g., backend/node_modules)
+        for subdir in repo_root.iterdir():
+            if subdir.is_dir() and not subdir.name.startswith("."):
+                match = subdir / pattern
+                if match.exists():
+                    found.append(match)
+
+                # Also check one level deeper (e.g., packages/shared-types/node_modules)
+                for subsubdir in subdir.iterdir():
+                    if subsubdir.is_dir() and not subsubdir.name.startswith("."):
+                        match = subsubdir / pattern
+                        if match.exists():
+                            found.append(match)
+
+    return sorted(set(found))
+
+
+def copy_dependencies(
+    repo_root: Path,
+    worktree_path: Path,
+    patterns: list[str] | None = None,
+) -> list[str]:
+    """Copy dependencies from main repo to worktree.
+
+    Returns list of relative paths that were copied.
+    """
+    deps = find_dependencies(repo_root, patterns)
+    copied = []
+
+    for dep_path in deps:
+        rel_path = dep_path.relative_to(repo_root)
+        target = worktree_path / rel_path
+
+        # Skip if already exists in worktree
+        if target.exists():
+            continue
+
+        # Ensure parent directory exists
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            if dep_path.is_dir():
+                shutil.copytree(dep_path, target, symlinks=True)
+            else:
+                shutil.copy2(dep_path, target)
+            copied.append(str(rel_path))
+        except (shutil.Error, OSError):
+            # Skip failures silently
+            pass
+
+    return copied

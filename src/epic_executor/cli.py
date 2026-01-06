@@ -6,12 +6,11 @@ from pathlib import Path
 
 from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
-from InquirerPy.validator import PathValidator
 from rich.console import Console
 
 from .config import Config, is_first_run, get_or_create_config, DEFAULT_CONFIG_DIR, AVAILABLE_MODELS
-from .executor import plan_epic, execute_epic, setup_worktree, find_existing_plan
-from .planner import parse_epic_info
+from .executor import plan_epic, execute_epic, setup_worktree, find_existing_plan, check_epic_dependency_graph
+from .planner import parse_epic_info, has_existing_dependency_graph
 
 console = Console()
 
@@ -56,25 +55,78 @@ async def first_run_setup() -> Config:
     return config
 
 
+async def browse_directory(start_path: Path) -> Path | None:
+    """Interactive directory browser."""
+    current = start_path.resolve()
+
+    while True:
+        # Build choices: parent, subdirectories, and select current
+        choices = []
+
+        # Option to select current directory
+        task_files = list(current.glob("[0-9]*.md"))
+        if task_files:
+            choices.append(Choice(
+                value="__SELECT__",
+                name=f"✓ Select this folder ({len(task_files)} task files found)"
+            ))
+
+        # Parent directory
+        if current.parent != current:
+            choices.append(Choice(value="__PARENT__", name=".. (parent directory)"))
+
+        # Subdirectories
+        try:
+            subdirs = sorted([d for d in current.iterdir() if d.is_dir() and not d.name.startswith(".")])
+            for subdir in subdirs[:20]:  # Limit to 20 to avoid huge lists
+                choices.append(Choice(value=str(subdir), name=f"📁 {subdir.name}/"))
+            if len(subdirs) > 20:
+                choices.append(Choice(value="__MORE__", name=f"... and {len(subdirs) - 20} more"))
+        except PermissionError:
+            pass
+
+        # Cancel option
+        choices.append(Choice(value="__CANCEL__", name="✗ Cancel"))
+
+        console.print(f"\n[dim]Current: {current}[/dim]")
+
+        selection = await inquirer.select(
+            message="Navigate to epic folder:",
+            choices=choices,
+        ).execute_async()
+
+        if selection == "__SELECT__":
+            return current
+        elif selection == "__PARENT__":
+            current = current.parent
+        elif selection == "__CANCEL__":
+            return None
+        elif selection == "__MORE__":
+            # Let user type path manually
+            typed = await inquirer.text(
+                message="Type path:",
+                default=str(current),
+            ).execute_async()
+            if typed:
+                typed_path = Path(typed)
+                if typed_path.is_dir():
+                    current = typed_path.resolve()
+        else:
+            current = Path(selection)
+
+
 async def select_epic_folder() -> str | None:
     """Interactive epic folder selection."""
-    # First ask for a starting directory
-    start_dir = await inquirer.filepath(
-        message="Select the epic folder:",
-        default=str(Path.cwd()),
-        validate=PathValidator(is_dir=True, message="Please select a directory"),
-        only_directories=True,
-    ).execute_async()
+    result = await browse_directory(Path.cwd())
 
-    if not start_dir:
+    if result is None:
         return None
 
     # Verify it looks like an epic folder
-    epic_path = Path(start_dir)
-    task_files = list(epic_path.glob("[0-9]*.md"))
+    task_files = list(result.glob("[0-9]*.md"))
 
     if not task_files:
-        console.print(f"[yellow]Warning:[/yellow] No task files found in {start_dir}")
+        console.print(f"[yellow]Warning:[/yellow] No task files found in {result}")
         proceed = await inquirer.confirm(
             message="This doesn't look like an epic folder. Continue anyway?",
             default=False,
@@ -83,7 +135,7 @@ async def select_epic_folder() -> str | None:
         if not proceed:
             return None
 
-    return start_dir
+    return str(result)
 
 
 async def select_action() -> str:
@@ -118,12 +170,13 @@ async def select_execution_options(epic_path: Path) -> dict:
         options["use_existing_plan"] = use_existing
 
     # Max concurrent agents
-    options["max_concurrent"] = await inquirer.number(
+    max_concurrent = await inquirer.number(
         message="Maximum concurrent agents:",
         default=4,
         min_allowed=1,
         max_allowed=10,
     ).execute_async()
+    options["max_concurrent"] = int(max_concurrent)
 
     # Create worktree?
     options["create_worktree"] = await inquirer.confirm(
@@ -198,16 +251,16 @@ async def edit_config(config: Config) -> Config:
                 console.print("[green]✓[/green] API key saved")
 
         elif action == "max_concurrent":
-            new_max = await inquirer.number(
+            new_max_str = await inquirer.number(
                 message="Maximum concurrent agents:",
                 default=config.max_concurrent,
                 min_allowed=1,
                 max_allowed=10,
             ).execute_async()
 
-            config.max_concurrent = int(new_max)
+            config.max_concurrent = int(new_max_str)
             config.save()
-            console.print(f"[green]✓[/green] Max concurrent updated to: {new_max}")
+            console.print(f"[green]✓[/green] Max concurrent updated to: {config.max_concurrent}")
 
 
 async def run_interactive() -> int:
@@ -245,10 +298,30 @@ async def run_interactive() -> int:
         console.print()
         console.print(f"[bold]Epic:[/bold] {epic_info.name}")
         console.print(f"[bold]Source:[/bold] {epic_folder}")
+
+        # Check for existing dependency graph in epic.md
+        has_graph, graph_content = check_epic_dependency_graph(epic_path)
+        if has_graph:
+            console.print("[green]✓[/green] Found dependency graph in epic.md")
+            console.print("[dim]Using task file depends_on fields for execution order[/dim]")
+        else:
+            console.print("[yellow]![/yellow] No dependency graph found in epic.md")
+            generate = await inquirer.confirm(
+                message="Generate execution plan? (saves to separate file)",
+                default=True,
+            ).execute_async()
+            if generate and action in ("plan", "execute"):
+                await plan_epic(epic_folder, Path(config.plans_dir))
+                console.print()
+
         console.print()
 
         if action == "plan":
-            await plan_epic(epic_folder, Path(config.plans_dir))
+            if not has_graph:
+                # Already generated above if user confirmed
+                pass
+            else:
+                await plan_epic(epic_folder, Path(config.plans_dir))
 
         elif action == "worktree":
             await setup_worktree(epic_folder, Path(config.worktree_dir))
@@ -267,9 +340,8 @@ async def run_interactive() -> int:
                 project_root = str(worktree.path)
                 console.print()
 
-            # Generate plan
-            await plan_epic(epic_folder, Path(config.plans_dir))
-            console.print()
+            # Set environment variables for agents
+            config.set_env_vars()
 
             # Execute
             status = await execute_epic(
@@ -359,6 +431,9 @@ def run_cli_with_args() -> int:
             project_root = str(worktree.path)
             console.print()
 
+        # Set environment variables for agents
+        config.set_env_vars()
+
         # Generate plan
         await plan_epic(epic_folder, Path(config.plans_dir))
         console.print()
@@ -383,7 +458,9 @@ def main():
         console.print("\n[yellow]Interrupted.[/yellow]")
         sys.exit(130)
     except Exception as e:
+        import traceback
         console.print(f"[red]Error:[/red] {e}")
+        console.print("[dim]" + traceback.format_exc() + "[/dim]")
         sys.exit(1)
 
 

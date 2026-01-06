@@ -94,18 +94,33 @@ def extract_file_list(body: str, section_name: str) -> list[str]:
     return files
 
 
+def _to_int(value) -> int | None:
+    """Try to convert a value to int."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
 def extract_dependencies(frontmatter: dict, self_task_num: int) -> list[int]:
     """Extract dependencies from frontmatter depends_on field only."""
-    deps = set()
+    deps: set[int] = set()
 
     if "depends_on" in frontmatter:
         depends_on = frontmatter["depends_on"]
-        if isinstance(depends_on, list):
-            for d in depends_on:
-                if isinstance(d, int):
-                    deps.add(d)
-                elif isinstance(d, str) and d.isdigit():
-                    deps.add(int(d))
+        # Handle single value or list
+        if not isinstance(depends_on, list):
+            depends_on = [depends_on]
+        for d in depends_on:
+            val = _to_int(d)
+            if val is not None:
+                deps.add(val)
 
     deps.discard(self_task_num)
     return sorted(deps)

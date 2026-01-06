@@ -86,6 +86,37 @@ def parse_epic_info(epic_path: Path) -> EpicInfo:
     )
 
 
+def find_dependency_graph_section(epic_path: Path) -> str | None:
+    """Check if epic.md has a Dependency Graph section.
+
+    Returns the section content if found, None otherwise.
+    """
+    epic_file = epic_path / "epic.md"
+    if not epic_file.exists():
+        return None
+
+    content = epic_file.read_text()
+
+    # Look for "Dependency Graph" or "Parallel Execution" section
+    patterns = [
+        r"^##\s+Dependency\s+Graph\s*\n(.*?)(?=^##\s|\Z)",
+        r"^##\s+Parallel\s+Execution\s*\n(.*?)(?=^##\s|\Z)",
+        r"^##\s+Execution\s+Order\s*\n(.*?)(?=^##\s|\Z)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, content, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+    return None
+
+
+def has_existing_dependency_graph(epic_path: Path) -> bool:
+    """Check if the epic has an existing dependency graph defined."""
+    return find_dependency_graph_section(epic_path) is not None
+
+
 def detect_file_conflicts(
     tasks: list[TaskDefinition],
 ) -> tuple[dict[str, list[int]], list[tuple[int, int, str]]]:

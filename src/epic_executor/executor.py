@@ -14,12 +14,14 @@ from .planner import (
     render_plan_markdown,
     save_plan,
     parse_epic_info,
+    has_existing_dependency_graph,
+    find_dependency_graph_section,
     ExecutionPlanDetail,
 )
 from .pool import run_pool, PoolStatus, TaskResult
 from .impl_agent import run_implementation
 from .verify_agent import run_verification
-from .worktree import create_worktree, WorktreeInfo
+from .worktree import create_worktree, copy_dependencies, get_repo_root, WorktreeInfo
 
 console = Console()
 
@@ -39,6 +41,15 @@ def find_existing_plan(epic_path: Path) -> Path | None:
         if plan_file.exists():
             return plan_file
     return None
+
+
+def check_epic_dependency_graph(epic_path: Path) -> tuple[bool, str | None]:
+    """Check if epic.md has a dependency graph section.
+
+    Returns (has_graph, graph_content).
+    """
+    content = find_dependency_graph_section(epic_path)
+    return (content is not None, content)
 
 
 def parse_existing_plan_info(plan_file: Path) -> dict:
@@ -184,5 +195,21 @@ async def setup_worktree(
         console.print(f"[yellow]Using existing worktree:[/yellow] {worktree.path}")
 
     console.print(f"[bold]Commit:[/bold] {worktree.commit}")
+
+    # Copy dependencies from main repo to worktree
+    repo_root = get_repo_root(epic_path)
+    if repo_root is None:
+        for parent in epic_path.parents:
+            repo_root = get_repo_root(parent)
+            if repo_root:
+                break
+
+    if repo_root and worktree.path != repo_root:
+        copied = copy_dependencies(repo_root, worktree.path)
+        if copied:
+            console.print("[bold]Copied dependencies:[/bold]")
+            for dep in copied:
+                console.print(f"  - {dep}")
+            worktree.copied_deps = copied
 
     return worktree
