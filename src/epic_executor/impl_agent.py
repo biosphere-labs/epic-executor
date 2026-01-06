@@ -1,34 +1,69 @@
 """Implementation agent for executing task definitions."""
 
 import os
+import re
 import subprocess
 from typing import Annotated
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
+from rich.console import Console
 
 from .parser import TaskDefinition
 
+console = Console()
 
-IMPL_SYSTEM_PROMPT = """You are an implementation agent that executes coding tasks.
 
-You have access to file operations and code execution tools. Your job is to:
+IMPL_SYSTEM_PROMPT = """You are an autonomous implementation agent that executes coding tasks.
+
+You MUST use your tools to complete tasks. You have these tools:
+- read_file: Read existing files before modifying
+- write_file: Create or modify files (YOU MUST USE THIS TO COMPLETE TASKS)
+- search_code: Search codebase with ripgrep
+- find_files: Find files by pattern
+- list_directory: List directory contents
+- execute_shell: Run shell commands
+
+CRITICAL: You must actually USE the write_file tool to create/modify code. Do not just describe what you would write - actually write it using write_file.
+
+Your job is to:
 1. Read the task definition carefully
-2. Implement the required deliverables
-3. Ensure all acceptance criteria are met
-4. Create or modify the specified files
+2. Use read_file to examine existing code
+3. Use write_file to implement ALL required deliverables
+4. Use write_file to create tests where appropriate
 
-Work methodically:
-- First read any existing files you need to modify
-- Plan your implementation
-- Write/modify files as needed
-- Test your changes if possible
-- Report what you've done
+RULES:
+- NEVER describe what you would do - USE THE TOOLS to do it
+- NEVER ask questions - just implement
+- ALWAYS use write_file for every file you need to create or modify
+- Complete ALL acceptance criteria in one pass
+- After using write_file, confirm what you wrote
 
-Be precise and complete. Follow the acceptance criteria exactly."""
+Work process:
+1. read_file to understand existing code
+2. write_file to implement each file
+3. Summarize what files you created (in past tense)
+
+If you don't use write_file, your task will fail. You MUST write actual code to files."""
+
+
+RESEARCH_SYSTEM_PROMPT = """You are a research agent that answers technical questions to help implementation agents.
+
+Your job is to:
+1. Search the codebase for relevant patterns and examples
+2. Read documentation and existing code
+3. Provide clear, actionable answers
+
+When answering:
+- Be concise and specific
+- Provide code examples when helpful
+- Reference specific files and line numbers
+- If something requires a library or pattern, explain how to use it
+
+Do NOT ask follow-up questions. Provide the best answer you can with available information."""
 
 
 @tool
@@ -92,6 +127,126 @@ def list_directory(dir_path: str) -> str:
 
 
 @tool
+def search_code(pattern: str, path: str, file_type: str | None = None) -> str:
+    """Search for a pattern in code files using ripgrep.
+
+    Args:
+        pattern: The regex pattern to search for.
+        path: The directory to search in.
+        file_type: Optional file type filter (e.g., 'ts', 'py', 'js').
+    """
+    try:
+        cmd = ["rg", "--max-count=50", "--line-number", "--context=2"]
+
+        if file_type:
+            cmd.extend(["--type", file_type])
+
+        cmd.extend([pattern, path])
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        output = result.stdout
+        if not output:
+            return f"[No matches found for '{pattern}' in {path}]"
+
+        # Truncate if too long
+        if len(output) > 10000:
+            output = output[:10000] + "\n...[truncated]"
+
+        return output
+    except FileNotFoundError:
+        return "[Error: ripgrep (rg) not installed. Install with: brew install ripgrep]"
+    except subprocess.TimeoutExpired:
+        return "[Error: Search timed out after 30 seconds]"
+    except Exception as e:
+        return f"[Error searching: {type(e).__name__}: {e}]"
+
+
+@tool
+def find_files(pattern: str, path: str) -> str:
+    """Find files matching a glob pattern.
+
+    Args:
+        pattern: Glob pattern (e.g., '*.ts', '**/*.test.js').
+        path: The directory to search in.
+    """
+    try:
+        cmd = ["find", path, "-type", "f", "-name", pattern]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        output = result.stdout.strip()
+        if not output:
+            return f"[No files found matching '{pattern}' in {path}]"
+
+        # Limit to 100 files
+        lines = output.split('\n')
+        if len(lines) > 100:
+            output = '\n'.join(lines[:100]) + f"\n...[{len(lines) - 100} more files]"
+
+        return output
+    except subprocess.TimeoutExpired:
+        return "[Error: Find timed out after 30 seconds]"
+    except Exception as e:
+        return f"[Error finding files: {type(e).__name__}: {e}]"
+
+
+@tool
+def fetch_docs(query: str, framework: str | None = None) -> str:
+    """Search for documentation about a framework or library.
+
+    Args:
+        query: What you want to learn about (e.g., 'NestJS guards', 'React hooks').
+        framework: Optional specific framework (e.g., 'nestjs', 'react', 'typescript').
+    """
+    try:
+        import urllib.request
+        import urllib.parse
+        import json
+
+        # Use DuckDuckGo instant answers API for quick docs lookup
+        search_query = f"{framework} {query}" if framework else query
+        encoded = urllib.parse.quote(search_query)
+        url = f"https://api.duckduckgo.com/?q={encoded}&format=json&no_html=1"
+
+        with urllib.request.urlopen(url, timeout=10) as response:
+            data = json.loads(response.read().decode())
+
+        results = []
+
+        # Abstract (main answer)
+        if data.get("Abstract"):
+            results.append(f"## Summary\n{data['Abstract']}")
+            if data.get("AbstractURL"):
+                results.append(f"Source: {data['AbstractURL']}")
+
+        # Related topics
+        if data.get("RelatedTopics"):
+            results.append("\n## Related")
+            for topic in data["RelatedTopics"][:5]:
+                if isinstance(topic, dict) and topic.get("Text"):
+                    results.append(f"- {topic['Text'][:200]}")
+
+        if not results:
+            return f"[No documentation found for '{search_query}'. Try searching the codebase instead.]"
+
+        return "\n".join(results)
+
+    except Exception as e:
+        return f"[Error fetching docs: {type(e).__name__}: {e}]"
+
+
+@tool
 def execute_shell(command: str, cwd: str | None = None) -> str:
     """Execute a shell command.
 
@@ -133,7 +288,7 @@ def get_llm() -> ChatOpenAI:
 
 def get_impl_tools() -> list:
     """Get tools for the implementation agent."""
-    return [read_file, write_file, list_directory, execute_shell]
+    return [read_file, write_file, list_directory, search_code, find_files, fetch_docs, execute_shell]
 
 
 def create_impl_agent(checkpointer=None):
@@ -190,8 +345,86 @@ def format_task_prompt(task: TaskDefinition, project_root: str) -> str:
     return "\n".join(parts)
 
 
-async def run_implementation(task: TaskDefinition, project_root: str) -> dict:
-    """Run the implementation agent on a task."""
+# Patterns that indicate the agent is asking for clarification (not polite closings)
+QUESTION_PATTERNS = [
+    "would you like me to proceed",
+    "shall i proceed with",
+    "do you want me to implement",
+    "should i implement this",
+    "which approach would you prefer",
+    "do you have a preference for",
+    "please confirm if",
+    "please clarify",
+]
+
+# Patterns that are just polite closings, not actual questions
+POLITE_ENDINGS = [
+    "let me know if you have any",
+    "let me know if you need any",
+    "i hope this helps",
+    "please review",
+    "please let me know",
+]
+
+
+def detect_question(output: str) -> tuple[bool, str | None]:
+    """Detect if the agent asked a question and extract it."""
+    output_lower = output.lower()
+
+    # Check for polite endings first - these are not real questions
+    for ending in POLITE_ENDINGS:
+        if ending in output_lower:
+            return False, None
+
+    for pattern in QUESTION_PATTERNS:
+        if pattern in output_lower:
+            # Extract the question context (last few lines before the question)
+            lines = output.strip().split('\n')
+            question_lines = []
+            for line in reversed(lines[-10:]):
+                question_lines.insert(0, line)
+                if '?' in line or any(p in line.lower() for p in QUESTION_PATTERNS):
+                    break
+            return True, '\n'.join(question_lines)
+
+    return False, None
+
+
+async def run_research(question: str, project_root: str) -> str:
+    """Run a research agent to answer a question."""
+    console.print(f"  [yellow]Researching:[/yellow] {question[:100]}...")
+
+    agent = create_react_agent(
+        model=get_llm(),
+        tools=[read_file, list_directory, search_code, find_files, fetch_docs, execute_shell],
+        checkpointer=MemorySaver(),
+    )
+
+    messages = [
+        SystemMessage(content=RESEARCH_SYSTEM_PROMPT),
+        HumanMessage(content=f"""Answer this question about the codebase at {project_root}:
+
+{question}
+
+Search the codebase for relevant patterns, read files, and provide a clear answer."""),
+    ]
+
+    config = {"configurable": {"thread_id": "research"}}
+
+    try:
+        result = await agent.ainvoke({"messages": messages}, config=config)
+
+        for msg in reversed(result.get("messages", [])):
+            if hasattr(msg, "content") and msg.content and not hasattr(msg, "tool_calls"):
+                return str(msg.content)
+
+        return "Could not find a clear answer."
+    except Exception as e:
+        return f"Research failed: {e}"
+
+
+async def run_implementation(task: TaskDefinition, project_root: str, max_retries: int = 2) -> dict:
+    """Run the implementation agent on a task with question handling."""
     agent = create_impl_agent()
 
     task_prompt = format_task_prompt(task, project_root)
@@ -202,37 +435,92 @@ async def run_implementation(task: TaskDefinition, project_root: str) -> dict:
     ]
 
     config = {"configurable": {"thread_id": f"task-{task.number}"}}
+    all_files_modified = []
+    all_outputs = []
 
-    try:
-        result = await agent.ainvoke({"messages": messages}, config=config)
+    for attempt in range(max_retries + 1):
+        try:
+            result = await agent.ainvoke({"messages": messages}, config=config)
 
-        ai_responses = []
-        files_modified = []
+            ai_responses = []
+            files_modified = []
 
-        for msg in result.get("messages", []):
-            if hasattr(msg, "content") and msg.content:
-                ai_responses.append(str(msg.content))
+            for msg in result.get("messages", []):
+                if hasattr(msg, "content") and msg.content:
+                    ai_responses.append(str(msg.content))
 
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tool_call in msg.tool_calls:
-                    if tool_call.get("name") == "write_file":
-                        args = tool_call.get("args", {})
-                        file_path = args.get("file_path")
-                        if file_path and file_path not in files_modified:
-                            files_modified.append(file_path)
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        if tool_call.get("name") == "write_file":
+                            args = tool_call.get("args", {})
+                            file_path = args.get("file_path")
+                            if file_path and file_path not in files_modified:
+                                files_modified.append(file_path)
+                                if file_path not in all_files_modified:
+                                    all_files_modified.append(file_path)
 
-        output = "\n\n".join(ai_responses)
-        success = bool(output) and "[Error" not in output
+            output = "\n\n".join(ai_responses)
+            all_outputs.append(output)
 
-        return {
-            "success": success,
-            "files_modified": files_modified,
-            "output": output,
-        }
+            # Also detect files from output (fallback for XML-style tool calls)
+            for match in re.finditer(r'\[Successfully wrote to: ([^\]]+)\]', output):
+                file_path = match.group(1)
+                if file_path not in all_files_modified:
+                    all_files_modified.append(file_path)
 
-    except Exception as e:
-        return {
-            "success": False,
-            "files_modified": [],
-            "output": f"Implementation failed: {type(e).__name__}: {e}",
-        }
+            # Check if agent asked a question
+            asked_question, question = detect_question(output)
+
+            if asked_question and attempt < max_retries:
+                console.print(f"  [dim]Task {task.number:03d} asked a question, researching...[/dim]")
+
+                # Run research to answer the question
+                research_answer = await run_research(question, project_root)
+                console.print(f"  [dim]Research complete, continuing implementation...[/dim]")
+
+                # Continue the conversation with the answer
+                messages = result.get("messages", [])
+                messages.append(HumanMessage(content=f"""Based on research, here's the answer:
+
+{research_answer}
+
+Please continue and complete the implementation. Do not ask any more questions."""))
+
+                continue  # Retry with the answer
+
+            # Check for success
+            has_output = bool(output)
+            wrote_files = len(all_files_modified) > 0
+
+            # Only consider fatal errors (write failures, permission issues)
+            # Ignore benign errors like file-not-found when reading
+            fatal_errors = [
+                "[Error: Permission denied",
+                "[Error writing file",
+                "[Error executing command",
+                "Implementation failed:",
+            ]
+            has_fatal_errors = any(err in output for err in fatal_errors)
+
+            # Success if we wrote files and no fatal errors
+            success = has_output and wrote_files and not has_fatal_errors and not asked_question
+
+            return {
+                "success": success,
+                "files_modified": all_files_modified,
+                "output": "\n\n---\n\n".join(all_outputs),
+            }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "files_modified": all_files_modified,
+                "output": f"Implementation failed: {type(e).__name__}: {e}",
+            }
+
+    # Exhausted retries
+    return {
+        "success": False,
+        "files_modified": all_files_modified,
+        "output": "\n\n---\n\n".join(all_outputs) + "\n\n[Exhausted retries - agent kept asking questions]",
+    }

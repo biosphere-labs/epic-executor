@@ -26,20 +26,42 @@ def build_dependency_graph(tasks: list["TaskDefinition"]) -> dict[int, list[int]
     return dict(graph)
 
 
-def build_in_degree(tasks: list["TaskDefinition"]) -> dict[int, int]:
-    """Count incoming edges for each task."""
-    in_degree = {task.number: len(task.dependencies) for task in tasks}
+def build_in_degree(
+    tasks: list["TaskDefinition"],
+    pre_completed: set[int] | None = None,
+) -> dict[int, int]:
+    """Count incoming edges for each task.
+
+    Args:
+        tasks: List of tasks to schedule
+        pre_completed: Set of task numbers already completed (dependencies satisfied)
+    """
+    pre_completed = pre_completed or set()
+    in_degree = {}
+    for task in tasks:
+        # Only count dependencies that aren't already completed
+        unsatisfied_deps = [d for d in task.dependencies if d not in pre_completed]
+        in_degree[task.number] = len(unsatisfied_deps)
     return in_degree
 
 
-def create_execution_plan(tasks: list["TaskDefinition"]) -> ExecutionPlan:
-    """Create parallel execution plan using Kahn's algorithm."""
+def create_execution_plan(
+    tasks: list["TaskDefinition"],
+    pre_completed: set[int] | None = None,
+) -> ExecutionPlan:
+    """Create parallel execution plan using Kahn's algorithm.
+
+    Args:
+        tasks: List of tasks to schedule
+        pre_completed: Set of task numbers already completed (for resume)
+    """
     if not tasks:
         return ExecutionPlan(levels=[], task_order=[], dependency_map={})
 
+    pre_completed = pre_completed or set()
     task_map = {t.number: t for t in tasks}
     graph = build_dependency_graph(tasks)
-    in_degree = build_in_degree(tasks)
+    in_degree = build_in_degree(tasks, pre_completed)
 
     # Find tasks with no dependencies (level 0)
     queue = deque([num for num, deg in in_degree.items() if deg == 0])

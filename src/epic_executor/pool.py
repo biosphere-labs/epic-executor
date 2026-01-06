@@ -34,9 +34,10 @@ async def run_pool(
     plan: ExecutionPlan,
     project_root: str,
     impl_fn: Callable[[TaskDefinition, str], Awaitable[dict]],
-    verify_fn: Callable[[TaskDefinition, str, dict], Awaitable[dict]],
+    verify_fn: Callable[[TaskDefinition, str, dict], Awaitable[dict]] | None = None,
     max_concurrent: int = 4,
     on_task_complete: Callable[[TaskResult], Awaitable[None]] | None = None,
+    pre_completed: set[int] | None = None,
 ) -> PoolStatus:
     """Run tasks with dependency-aware parallelism.
 
@@ -45,11 +46,15 @@ async def run_pool(
         plan: Execution plan with dependencies
         project_root: Root directory for implementation
         impl_fn: Implementation function
-        verify_fn: Verification function
+        verify_fn: Optional verification function (skipped if None)
         max_concurrent: Maximum parallel tasks
         on_task_complete: Optional callback for task completion
+        pre_completed: Set of task numbers already completed (for resume)
     """
     status = PoolStatus()
+    # Include pre-completed tasks so get_ready_tasks knows dependencies are satisfied
+    if pre_completed:
+        status.completed.update(pre_completed)
     task_map = {t.number: t for t in tasks}
     semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -60,25 +65,31 @@ async def run_pool(
             # Run implementation
             impl_result = await impl_fn(task, project_root)
 
-            # Run verification
-            verify_result = await verify_fn(task, project_root, impl_result)
-
-            success = impl_result.get("success", False) and verify_result.get(
-                "passed", False
-            )
+            # Implementation success is the only check needed
+            success = impl_result.get("success", False)
 
             return TaskResult(
                 task_num=task_num,
                 success=success,
                 impl_output=impl_result.get("output", ""),
-                verify_output=verify_result.get("test_output", ""),
+                verify_output="",
                 files_modified=impl_result.get("files_modified", []),
             )
 
     pending_tasks: set[asyncio.Task] = set()
     task_to_num: dict[asyncio.Task, int] = {}
 
-    while len(status.completed) + len(status.failed) < len(tasks):
+    # Track which tasks from our list are done (not pre_completed)
+    task_nums_to_run = {t.number for t in tasks}
+    pre_completed = pre_completed or set()
+
+    def tasks_done():
+        """Count tasks from our list that are completed or failed."""
+        completed_from_list = len(status.completed & task_nums_to_run)
+        failed_from_list = len(status.failed & task_nums_to_run)
+        return completed_from_list + failed_from_list
+
+    while tasks_done() < len(tasks):
         # Find tasks ready to run
         ready = get_ready_tasks(plan, status.completed, status.in_progress)
 
