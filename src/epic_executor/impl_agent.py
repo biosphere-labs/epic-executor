@@ -73,6 +73,18 @@ def _resolve_path(file_path: str, project_root: str) -> str:
     return os.path.join(project_root, file_path)
 
 
+def _validate_file_path(file_path: str) -> str | None:
+    """Validate a file path and return an error message if invalid."""
+    basename = os.path.basename(file_path)
+    if not basename:
+        return f"Invalid path - missing filename: {file_path}"
+    if basename.startswith('.') and '.' not in basename[1:]:
+        # Hidden file with no extension is okay, but ".js" alone is not
+        if len(basename) <= 4:  # e.g., ".js", ".py", ".ts"
+            return f"Invalid path - filename appears to be just an extension: {file_path}"
+    return None
+
+
 def create_read_file_tool(project_root: str):
     """Create a read_file tool bound to a project root."""
     @tool
@@ -105,6 +117,11 @@ def create_write_file_tool(project_root: str):
             file_path: Path to the file to write (relative to project root or absolute).
             content: The content to write.
         """
+        # Validate the path before attempting to write
+        validation_error = _validate_file_path(file_path)
+        if validation_error:
+            return f"[Error: {validation_error}]"
+
         resolved = _resolve_path(file_path, project_root)
         try:
             parent_dir = os.path.dirname(resolved)
