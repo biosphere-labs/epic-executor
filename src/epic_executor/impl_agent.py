@@ -363,12 +363,63 @@ def create_impl_agent(project_root: str, checkpointer=None):
     )
 
 
+def detect_project_context(project_root: str) -> str:
+    """Detect project tech stack and return context for the agent."""
+    context_parts = []
+
+    # Check for TypeScript
+    tsconfig = os.path.join(project_root, "tsconfig.json")
+    if os.path.exists(tsconfig):
+        context_parts.append("- This is a TypeScript project. Use .ts/.tsx extensions, not .js/.jsx")
+
+    # Check for package.json to detect framework
+    package_json = os.path.join(project_root, "package.json")
+    if os.path.exists(package_json):
+        try:
+            import json
+            with open(package_json, "r") as f:
+                pkg = json.load(f)
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+
+            if "next" in deps:
+                context_parts.append("- This is a Next.js project. Follow Next.js conventions (app router, pages, etc.)")
+            elif "react" in deps:
+                context_parts.append("- This is a React project")
+
+            if "nestjs" in deps or "@nestjs/core" in deps:
+                context_parts.append("- Backend uses NestJS framework. Follow NestJS conventions (modules, services, controllers)")
+
+            if "express" in deps:
+                context_parts.append("- Backend uses Express.js")
+
+        except Exception:
+            pass
+
+    # Check for Python
+    if os.path.exists(os.path.join(project_root, "pyproject.toml")) or \
+       os.path.exists(os.path.join(project_root, "setup.py")):
+        context_parts.append("- This is a Python project")
+
+    # Check for Rails
+    if os.path.exists(os.path.join(project_root, "Gemfile")):
+        context_parts.append("- This is a Ruby/Rails project")
+
+    if context_parts:
+        return "## Project Context\n" + "\n".join(context_parts) + "\n"
+    return ""
+
+
 def format_task_prompt(task: TaskDefinition, project_root: str) -> str:
     """Format the task definition into a prompt."""
     parts = [
         f"# Task {task.number}: {task.name}",
         "",
     ]
+
+    # Add project context
+    project_context = detect_project_context(project_root)
+    if project_context:
+        parts.append(project_context)
 
     if task.deliverables:
         parts.extend(["## Deliverables", task.deliverables, ""])
