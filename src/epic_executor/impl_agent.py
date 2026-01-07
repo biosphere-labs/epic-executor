@@ -363,61 +363,14 @@ def create_impl_agent(project_root: str, checkpointer=None):
     )
 
 
-def detect_project_context(project_root: str) -> str:
-    """Detect project tech stack and return context for the agent."""
-    context_parts = []
-
-    # Check for TypeScript
-    tsconfig = os.path.join(project_root, "tsconfig.json")
-    if os.path.exists(tsconfig):
-        context_parts.append("- This is a TypeScript project. Use .ts/.tsx extensions, not .js/.jsx")
-
-    # Check for package.json to detect framework
-    package_json = os.path.join(project_root, "package.json")
-    if os.path.exists(package_json):
-        try:
-            import json
-            with open(package_json, "r") as f:
-                pkg = json.load(f)
-            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-
-            if "next" in deps:
-                context_parts.append("- This is a Next.js project. Follow Next.js conventions (app router, pages, etc.)")
-            elif "react" in deps:
-                context_parts.append("- This is a React project")
-
-            if "nestjs" in deps or "@nestjs/core" in deps:
-                context_parts.append("- Backend uses NestJS framework. Follow NestJS conventions (modules, services, controllers)")
-
-            if "express" in deps:
-                context_parts.append("- Backend uses Express.js")
-
-        except Exception:
-            pass
-
-    # Check for Python
-    if os.path.exists(os.path.join(project_root, "pyproject.toml")) or \
-       os.path.exists(os.path.join(project_root, "setup.py")):
-        context_parts.append("- This is a Python project")
-
-    # Check for Rails
-    if os.path.exists(os.path.join(project_root, "Gemfile")):
-        context_parts.append("- This is a Ruby/Rails project")
-
-    if context_parts:
-        return "## Project Context\n" + "\n".join(context_parts) + "\n"
-    return ""
-
-
-def format_task_prompt(task: TaskDefinition, project_root: str) -> str:
+def format_task_prompt(task: TaskDefinition, project_root: str, project_context: str = "") -> str:
     """Format the task definition into a prompt."""
     parts = [
         f"# Task {task.number}: {task.name}",
         "",
     ]
 
-    # Add project context
-    project_context = detect_project_context(project_root)
+    # Add project context if provided
     if project_context:
         parts.append(project_context)
 
@@ -541,11 +494,16 @@ Search the codebase for relevant patterns, read files, and provide a clear answe
         return f"Research failed: {e}"
 
 
-async def run_implementation(task: TaskDefinition, project_root: str, max_retries: int = 2) -> dict:
+async def run_implementation(
+    task: TaskDefinition,
+    project_root: str,
+    max_retries: int = 2,
+    project_context: str = "",
+) -> dict:
     """Run the implementation agent on a task with question handling."""
     agent = create_impl_agent(project_root)
 
-    task_prompt = format_task_prompt(task, project_root)
+    task_prompt = format_task_prompt(task, project_root, project_context)
 
     messages = [
         SystemMessage(content=IMPL_SYSTEM_PROMPT),

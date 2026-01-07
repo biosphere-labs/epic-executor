@@ -20,6 +20,7 @@ from .planner import (
 )
 from .pool import run_pool, PoolStatus, TaskResult
 from .impl_agent import run_implementation
+from .research_agent import get_project_context_prompt
 from .worktree import create_worktree, copy_dependencies, get_repo_root, commit_changes, get_current_branch, push_branch, create_pull_request, WorktreeInfo
 from .status import load_or_create_status, ExecutionStatus
 
@@ -111,6 +112,14 @@ async def execute_epic(
     plan = create_execution_plan(tasks, pre_completed=completed)
     log(f"Execution levels: {plan.levels}")
 
+    # Research phase - analyze project context
+    log("[bold]Analyzing project context...[/bold]")
+    project_context = get_project_context_prompt(project_root)
+
+    # Create implementation wrapper that includes project context
+    async def impl_with_context(task: TaskDefinition, proj_root: str) -> dict:
+        return await run_implementation(task, proj_root, project_context=project_context)
+
     async def progress_callback(result: TaskResult):
         status_icon = "[green]✓[/green]" if result.success else "[red]✗[/red]"
         log(f"Task {result.task_num:03d} {status_icon}")
@@ -142,7 +151,7 @@ async def execute_epic(
         tasks=tasks,
         plan=plan,
         project_root=project_root,
-        impl_fn=run_implementation,
+        impl_fn=impl_with_context,
         verify_fn=None,  # Skip verification - implementation only
         max_concurrent=max_concurrent,
         on_task_complete=progress_callback,
