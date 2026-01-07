@@ -3,8 +3,10 @@
 import os
 import re
 import subprocess
+from pathlib import Path
 from typing import Annotated
 
+import yaml
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -17,53 +19,23 @@ from .parser import TaskDefinition
 console = Console()
 
 
-IMPL_SYSTEM_PROMPT = """You are an autonomous implementation agent that executes coding tasks.
-
-You MUST use your tools to complete tasks. You have these tools:
-- read_file: Read existing files before modifying
-- write_file: Create or modify files (YOU MUST USE THIS TO COMPLETE TASKS)
-- search_code: Search codebase with ripgrep
-- find_files: Find files by pattern
-- list_directory: List directory contents
-- execute_shell: Run shell commands
-
-CRITICAL: You must actually USE the write_file tool to create/modify code. Do not just describe what you would write - actually write it using write_file.
-
-Your job is to:
-1. Read the task definition carefully
-2. Use read_file to examine existing code
-3. Use write_file to implement ALL required deliverables
-4. Use write_file to create tests where appropriate
-
-RULES:
-- NEVER describe what you would do - USE THE TOOLS to do it
-- NEVER ask questions - just implement
-- ALWAYS use write_file for every file you need to create or modify
-- Complete ALL acceptance criteria in one pass
-- After using write_file, confirm what you wrote
-
-Work process:
-1. read_file to understand existing code
-2. write_file to implement each file
-3. Summarize what files you created (in past tense)
-
-If you don't use write_file, your task will fail. You MUST write actual code to files."""
+def load_prompts() -> dict:
+    """Load prompts from YAML file."""
+    prompts_path = Path(__file__).parent / "prompts" / "implementation.yaml"
+    if prompts_path.exists():
+        with open(prompts_path, "r") as f:
+            return yaml.safe_load(f)
+    # Fallback to minimal prompts if file not found
+    return {
+        "system_prompt": "You are an implementation agent. Use tools to complete tasks.",
+        "research_prompt": "You are a research agent. Search the codebase and provide answers.",
+    }
 
 
-RESEARCH_SYSTEM_PROMPT = """You are a research agent that answers technical questions to help implementation agents.
-
-Your job is to:
-1. Search the codebase for relevant patterns and examples
-2. Read documentation and existing code
-3. Provide clear, actionable answers
-
-When answering:
-- Be concise and specific
-- Provide code examples when helpful
-- Reference specific files and line numbers
-- If something requires a library or pattern, explain how to use it
-
-Do NOT ask follow-up questions. Provide the best answer you can with available information."""
+# Load prompts from external file
+_PROMPTS = load_prompts()
+IMPL_SYSTEM_PROMPT = _PROMPTS.get("system_prompt", "")
+RESEARCH_SYSTEM_PROMPT = _PROMPTS.get("research_prompt", "")
 
 
 def _resolve_path(file_path: str, project_root: str) -> str:

@@ -1,0 +1,73 @@
+# Epic Executor Prompt Configuration
+# This file defines which prompts to use and key settings
+
+version: "1.0"
+
+# Prompt file references
+prompts:
+  implementation: implementation.yaml
+  research: research.yaml
+  verification: verification.yaml
+
+# Agent behavior settings
+settings:
+  # Maximum retries when agent asks questions
+  max_question_retries: 2
+
+  # Whether to run pre-implementation research
+  enable_pre_research: true
+
+  # Whether to run verification after implementation
+  enable_verification: true
+
+  # Whether to require tests
+  require_tests: true
+
+  # Maximum files an agent can modify (safety limit)
+  max_files_per_task: 20
+
+# Safety rules - these override any prompt instructions
+safety_rules:
+  # Paths where files should NEVER be created
+  forbidden_write_paths:
+    - ".claude/"
+    - ".git/"
+    - "node_modules/"
+    - "__pycache__/"
+    - ".next/"
+    - "dist/"
+    - "build/"
+
+  # Patterns for files that should NEVER be deleted
+  protected_file_patterns:
+    - "*.lock"
+    - "*.json"  # package.json, tsconfig.json, etc.
+    - ".env*"
+    - "*.md"  # README, CHANGELOG, etc.
+
+  # Maximum lines a single file can have (prevents accidental large writes)
+  max_file_lines: 2000
+
+  # Patterns that indicate destructive changes (should warn)
+  destructive_patterns:
+    - "rm -rf"
+    - "git reset --hard"
+    - "DROP TABLE"
+    - "DELETE FROM"
+
+# Reference patterns to enforce
+conventions:
+  # These should be detected from codebase, but can be overridden
+  backend:
+    module_pattern: "backend/src/{name}/{name}.module.ts"
+    service_pattern: "backend/src/{name}/services/{name}.service.ts"
+    controller_pattern: "backend/src/{name}/{name}.controller.ts"
+    dto_pattern: "backend/src/{name}/dto/{name}.dto.ts"
+    test_pattern: "backend/src/{name}/**/*.spec.ts"
+
+  frontend:
+    component_pattern: "frontend/src/components/{Name}/{Name}.tsx"
+    hook_pattern: "frontend/src/hooks/use{Name}.ts"
+    page_pattern: "frontend/src/pages/{Name}Page.tsx"
+    service_pattern: "frontend/src/services/{name}.ts"
+    test_pattern: "frontend/src/**/*.test.{ts,tsx}"
