@@ -1,6 +1,6 @@
 [project]
 name = "epic-executor"
-version = "0.1.0"
+version = "0.1.1"
 description = "Parallel task executor for epic/task markdown files"
 requires-python = ">=3.10"
 readme = "README.md"
