@@ -188,7 +188,7 @@ async def select_action() -> str:
     ).execute_async()
 
 
-async def select_execution_options(epic_path: Path) -> dict:
+async def select_execution_options(epic_path: Path, epic_info=None) -> dict:
     """Select execution options."""
     options = {}
 
@@ -211,11 +211,17 @@ async def select_execution_options(epic_path: Path) -> dict:
     ).execute_async()
     options["max_concurrent"] = int(max_concurrent)
 
-    # Create worktree?
-    options["create_worktree"] = await inquirer.confirm(
-        message="Create a git worktree for isolated execution?",
-        default=True,
-    ).execute_async()
+    # Check if worktree is already configured (from epic.md or execution-status.json)
+    if epic_info and epic_info.worktree_path:
+        console.print(f"[green]✓[/green] Using existing worktree: {epic_info.worktree_path}")
+        options["create_worktree"] = False
+        options["existing_worktree_path"] = epic_info.worktree_path
+    else:
+        # Create worktree?
+        options["create_worktree"] = await inquirer.confirm(
+            message="Create a git worktree for isolated execution?",
+            default=True,
+        ).execute_async()
 
     # Confirm execution
     options["confirm"] = await inquirer.confirm(
@@ -360,18 +366,22 @@ async def run_interactive() -> int:
             await setup_worktree(epic_folder, Path(config.worktree_dir))
 
         elif action == "execute":
-            options = await select_execution_options(epic_path)
+            options = await select_execution_options(epic_path, epic_info)
 
             if not options.get("confirm", False):
                 console.print("[yellow]Execution cancelled.[/yellow]")
                 continue
 
-            # Set up worktree if requested
-            project_root = str(epic_path.parent.parent.parent)
-            if options.get("create_worktree", False):
+            # Determine project root - use existing worktree or create new one
+            if options.get("existing_worktree_path"):
+                project_root = options["existing_worktree_path"]
+                console.print(f"[bold]Project root:[/bold] {project_root}")
+            elif options.get("create_worktree", False):
                 worktree = await setup_worktree(epic_folder, Path(config.worktree_dir))
                 project_root = str(worktree.path)
                 console.print()
+            else:
+                project_root = str(epic_path.parent.parent.parent)
 
             # Set environment variables for agents
             config.set_env_vars()
@@ -457,12 +467,19 @@ def run_cli_with_args() -> int:
             await plan_epic(epic_folder, Path(config.plans_dir))
             return 0
 
-        # Set up worktree unless disabled
-        project_root = str(Path(epic_folder).parent.parent.parent)
-        if not args.no_worktree:
+        epic_path = Path(epic_folder)
+        epic_info = parse_epic_info(epic_path)
+
+        # Determine project root - use existing worktree if available
+        if epic_info.worktree_path:
+            project_root = epic_info.worktree_path
+            console.print(f"[green]✓[/green] Using existing worktree: {project_root}")
+        elif not args.no_worktree:
             worktree = await setup_worktree(epic_folder, Path(config.worktree_dir))
             project_root = str(worktree.path)
             console.print()
+        else:
+            project_root = str(epic_path.parent.parent.parent)
 
         # Set environment variables for agents
         config.set_env_vars()

@@ -336,7 +336,12 @@ def create_impl_agent(project_root: str, checkpointer=None):
 
 
 def format_task_prompt(task: TaskDefinition, project_root: str, project_context: str = "") -> str:
-    """Format the task definition into a prompt."""
+    """Format the task definition into a prompt.
+
+    Uses full_content when available (detailed task format) to preserve
+    all instructions including CRITICAL CONSTRAINTS, EXACT IMPLEMENTATION,
+    VERIFICATION COMMANDS, etc.
+    """
     parts = [
         f"# Task {task.number}: {task.name}",
         "",
@@ -345,34 +350,44 @@ def format_task_prompt(task: TaskDefinition, project_root: str, project_context:
     # Add project context if provided
     if project_context:
         parts.append(project_context)
-
-    if task.deliverables:
-        parts.extend(["## Deliverables", task.deliverables, ""])
-
-    if task.acceptance_criteria:
-        parts.append("## Acceptance Criteria")
-        for criterion in task.acceptance_criteria:
-            parts.append(f"- {criterion}")
         parts.append("")
 
-    if task.files_to_create:
-        parts.append("## Files to Create")
-        for f in task.files_to_create:
-            parts.append(f"- {f}")
-        parts.append("")
+    # Use full_content if available (detailed format), otherwise fall back to parsed fields
+    if task.full_content:
+        parts.append(task.full_content)
+    else:
+        # Legacy format: reconstruct from parsed fields
+        if task.deliverables:
+            parts.extend(["## Deliverables", task.deliverables, ""])
 
-    if task.files_to_modify:
-        parts.append("## Files to Modify")
-        for f in task.files_to_modify:
-            parts.append(f"- {f}")
-        parts.append("")
+        if task.acceptance_criteria:
+            parts.append("## Acceptance Criteria")
+            for criterion in task.acceptance_criteria:
+                parts.append(f"- {criterion}")
+            parts.append("")
+
+        if task.files_to_create:
+            parts.append("## Files to Create")
+            for f in task.files_to_create:
+                parts.append(f"- {f}")
+            parts.append("")
+
+        if task.files_to_modify:
+            parts.append("## Files to Modify")
+            for f in task.files_to_modify:
+                parts.append(f"- {f}")
+            parts.append("")
 
     parts.extend([
+        "",
         "## Project Root",
         f"All file paths should be relative to: {project_root}",
         "",
-        "Please implement this task. Read any existing files first, "
-        "then create or modify files as needed to meet all acceptance criteria.",
+        "IMPORTANT: Follow ALL instructions in this task exactly as specified.",
+        "- Read CRITICAL CONSTRAINTS section carefully - violations cause failure",
+        "- Follow EXACT IMPLEMENTATION templates if provided",
+        "- Run VERIFICATION COMMANDS after implementation",
+        "- Do NOT deviate from specified file paths or names",
     ])
 
     return "\n".join(parts)

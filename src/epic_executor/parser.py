@@ -21,6 +21,7 @@ class TaskDefinition:
     files_to_modify: list[str] = field(default_factory=list)
     dependencies: list[int] = field(default_factory=list)
     frontmatter: dict = field(default_factory=dict)
+    full_content: str = ""  # Complete task markdown for detailed instructions
 
     @property
     def number(self) -> int:
@@ -62,6 +63,7 @@ def parse_task_file(path: Path) -> TaskDefinition:
         files_to_modify=files_to_modify,
         dependencies=dependencies,
         frontmatter=frontmatter,
+        full_content=body.strip(),  # Pass complete task content to LLM
     )
 
 

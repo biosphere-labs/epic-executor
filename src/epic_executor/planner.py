@@ -20,6 +20,7 @@ class EpicInfo:
     description: str
     branch_name: str
     source_path: Path
+    worktree_path: str | None = None  # Pre-configured worktree from epic.md
 
 
 @dataclass
@@ -44,7 +45,7 @@ class ExecutionPlanDetail:
 
 
 def parse_epic_info(epic_path: Path) -> EpicInfo:
-    """Parse epic.md to extract epic name and description."""
+    """Parse epic.md to extract epic name, description, and worktree path."""
     epic_file = epic_path / "epic.md"
 
     if not epic_file.exists():
@@ -60,6 +61,7 @@ def parse_epic_info(epic_path: Path) -> EpicInfo:
 
     name = ""
     description = ""
+    worktree_path = None
 
     if content.startswith("---"):
         parts = content.split("---", 2)
@@ -67,6 +69,7 @@ def parse_epic_info(epic_path: Path) -> EpicInfo:
             frontmatter = yaml.safe_load(parts[1]) or {}
             name = frontmatter.get("name", "")
             description = frontmatter.get("description", "")
+            worktree_path = frontmatter.get("worktree") or frontmatter.get("worktree_path")
 
     if not name:
         heading_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
@@ -78,11 +81,23 @@ def parse_epic_info(epic_path: Path) -> EpicInfo:
 
     branch_name = "feature/" + re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
+    # Also check execution-status.json for existing worktree path
+    if not worktree_path:
+        status_file = epic_path / "execution-status.json"
+        if status_file.exists():
+            import json
+            try:
+                status = json.loads(status_file.read_text())
+                worktree_path = status.get("worktree_path")
+            except (json.JSONDecodeError, KeyError):
+                pass
+
     return EpicInfo(
         name=name,
         description=description,
         branch_name=branch_name,
         source_path=epic_path,
+        worktree_path=worktree_path,
     )
 
 

@@ -30,17 +30,16 @@ system_prompt: |
   - Example: Use `DynamoDBService` not `new DynamoDB()`
   - Example: Use `S3Service` not `new S3Client()`
 
-  ### 4. ALWAYS Write Tests
-  - Every service file needs a corresponding .spec.ts or .test.ts file
-  - Every React component needs a corresponding .test.tsx file
-  - Copy test patterns from existing test files in the codebase
-  - Tests are NOT optional - task is incomplete without them
-
-  ### 5. Follow Project Conventions
+  ### 4. Follow Project Conventions
   - Match the file extension used in the project (.ts not .js if TypeScript)
   - Match the import style used in existing files
   - Match the naming conventions (camelCase, PascalCase, kebab-case)
   - Match the directory structure patterns
+
+  ### 5. SKIP Tests - Implementation Only
+  - Do NOT write test files unless EXPLICITLY requested in the task
+  - Focus only on the implementation files
+  - Tests will be handled separately after implementation
 
   ## Work Process
 
@@ -53,26 +52,26 @@ system_prompt: |
   2. **Plan Your Changes**
      - Identify ALL files you need to create
      - Identify ALL files you need to modify (additive only!)
-     - Identify test files you need to create
 
   3. **Implement**
      - Create new files following existing patterns
      - Modify existing files by ADDING code, not replacing
-     - Write tests for all new functionality
+     - Follow EXACT IMPLEMENTATION templates if provided in task
 
   4. **Verify**
-     - Confirm all files were created
+     - Confirm all files were created at the EXACT paths specified
      - Confirm no existing functionality was removed
      - Summarize what you created (past tense)
 
   ## Output Requirements
   - You MUST use write_file for every file you create or modify
+  - Use EXACT file paths as specified in the task - do NOT rename or relocate
   - After each write_file, confirm what you wrote
   - At the end, list ALL files you created or modified
 
   If you don't use write_file, your task will fail.
   If you delete existing code, your task will fail.
-  If you skip tests, your task will fail.
+  If you create files at wrong paths, your task will fail.
 
 research_prompt: |
   You are a research agent that answers technical questions to help implementation agents.
@@ -112,14 +111,15 @@ task_prompt_template: |
 
   ## Implementation Instructions
 
-  1. **FIRST**: Read any pattern files mentioned above
+  1. **FIRST**: Read any pattern files mentioned in the task
   2. **SECOND**: Search for similar existing implementations
   3. **THIRD**: Implement following the patterns you found
-  4. **FOURTH**: Write tests following existing test patterns
-  5. **FINALLY**: Verify all files created, nothing deleted
+  4. **FINALLY**: Verify all files created at EXACT paths specified
 
   REMEMBER:
   - DO NOT delete or gut existing files
-  - DO NOT skip writing tests
+  - DO NOT write tests (handled separately)
+  - DO NOT rename or relocate files from specified paths
   - DO use existing services via dependency injection
   - DO match the project's code style exactly
+  - DO follow EXACT IMPLEMENTATION templates if provided
