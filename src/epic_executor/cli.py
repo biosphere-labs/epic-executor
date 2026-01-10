@@ -367,7 +367,7 @@ async def run_interactive() -> int:
                 continue
 
             # Set up worktree if requested
-            project_root = epic_folder
+            project_root = str(epic_path.parent.parent.parent)
             if options.get("create_worktree", False):
                 worktree = await setup_worktree(epic_folder, Path(config.worktree_dir))
                 project_root = str(worktree.path)
@@ -458,7 +458,7 @@ def run_cli_with_args() -> int:
             return 0
 
         # Set up worktree unless disabled
-        project_root = epic_folder
+        project_root = str(Path(epic_folder).parent.parent.parent)
         if not args.no_worktree:
             worktree = await setup_worktree(epic_folder, Path(config.worktree_dir))
             project_root = str(worktree.path)
